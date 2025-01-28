@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) void {
 +    });
 
     // Where `exe` represents your executable/library to link to
-+    exe.linkLibrary(cimgui_dep.artifact("SDL_Image.zig"));
++    exe.linkLibrary(sdlimage_dep.artifact("SDL_Image.zig"));
 
     // -- snip --
 }
