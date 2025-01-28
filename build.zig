@@ -10,7 +10,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    const sdl_dep = b.dependency("sdl", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    b.installArtifact(sdl_dep.artifact("SDL3"));
     b.installArtifact(lib);
+    lib.linkLibrary(sdl_dep.artifact("SDL3"));
 
     lib.defineCMacro("USE_STBIMAGE", "1");
     lib.defineCMacro("LOAD_BMP", "1");
