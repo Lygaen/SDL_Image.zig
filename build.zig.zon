@@ -32,6 +32,7 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "SDL_image",
         // For example...
         //"LICENSE",
         //"README.md",
