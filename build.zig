@@ -55,5 +55,6 @@ pub fn build(b: *std.Build) void {
         .flags = &[_][]const u8{"-std=c99"},
     });
     lib.addIncludePath(b.path("SDL_image/include/"));
+    lib.addSystemIncludePath(b.path("SDL3/"));
     lib.installHeader(b.path("SDL_image/include/SDL3_image/SDL_image.h"), "SDL3_image/SDL_image.h");
 }
