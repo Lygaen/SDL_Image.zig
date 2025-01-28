@@ -4,19 +4,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const sdl_dep = b.dependency("sdl", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
     const lib = b.addStaticLibrary(.{
         .name = "SDL_Image.zig",
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-
-    lib.linkLibrary(sdl_dep.artifact("SDL3"));
     b.installArtifact(lib);
 
     lib.defineCMacro("USE_STBIMAGE", "1");

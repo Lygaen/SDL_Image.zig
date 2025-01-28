@@ -51,6 +51,14 @@ jobs:
         with:
           name: sources
           path: '${{ github.workspace}}/dist'
+      - name: 'Generate summary'
+        run: |
+          echo "Run the following commands to download all artifacts:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "mkdir -p /tmp/${{ steps.releaser.outputs.project }}-${{ steps.releaser.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "cd /tmp/${{ steps.releaser.outputs.project }}-${{ steps.releaser.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "gh run -R ${{ github.repository }} download ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
   linux-verify:
     needs: [src]
@@ -104,11 +112,19 @@ jobs:
             --root "${{ steps.tar.outputs.path }}" \
             --github \
             --debug
+      - name: 'Install Linux dependencies'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            gnome-desktop-testing libasound2-dev libpulse-dev libaudio-dev libjack-dev libsndio-dev \
+            libusb-1.0-0-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
+            libxss-dev libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
+            libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev fcitx-libs-dev
       - name: 'Extract dependencies, build and install them'
         id: deps-build
         run: |
-          tar -C /tmp -v -x -f "${{ steps.deps.outputs.dep-path }}/SDL2-${{ steps.deps.outputs.dep-sdl-version }}.tar.gz"
-          cmake -S /tmp/SDL2-${{ steps.deps.outputs.dep-sdl-version }} -B /tmp/SDL-build -DCMAKE_INSTALL_PREFIX=/tmp/deps-prefix
+          tar -C /tmp -v -x -f "${{ steps.deps.outputs.dep-path }}/SDL3-${{ steps.deps.outputs.dep-sdl-version }}.tar.gz"
+          cmake -S /tmp/SDL3-${{ steps.deps.outputs.dep-sdl-version }} -B /tmp/SDL-build -DCMAKE_INSTALL_PREFIX=/tmp/deps-prefix
           cmake --build /tmp/SDL-build
           cmake --install /tmp/SDL-build
           echo "path=/tmp/deps-prefix" >>$GITHUB_OUTPUT
@@ -117,8 +133,8 @@ jobs:
           cmake \
             -S ${{ steps.tar.outputs.path }} \
             -B /tmp/build \
-            -DSDL2IMAGE_SAMPLES=ON \
-            -DSDL2IMAGE_TESTS=ON \
+            -DSDLIMAGE_SAMPLES=ON \
+            -DSDLIMAGE_TESTS=ON \
             -DCMAKE_PREFIX_PATH="${{ steps.deps-build.outputs.path }}"
           cmake --build /tmp/build --verbose
           # ctest --test-dir /tmp/build --no-tests=error --output-on-failure
@@ -138,6 +154,9 @@ jobs:
         with:
           ref: ${{ inputs.commit }}
           sparse-checkout: 'build-scripts/build-release.py'
+      - name: 'Install nasm'
+        run: |
+          brew install nasm
       - name: 'Download source archives'
         uses: actions/download-artifact@v4
         with:
@@ -152,7 +171,7 @@ jobs:
       - name: 'Download external dependencies'
         run: |
           sh "${{ steps.tar.outputs.path }}/external/download.sh" --depth 1
-      - name: 'Build SDL2_image.dmg'
+      - name: 'Build SDL3_image.dmg'
         id: releaser
         shell: bash
         env:
@@ -208,10 +227,10 @@ jobs:
       - name: 'Mount dependencies'
         id: deps-mount
         run: |
-          hdiutil attach "${{ steps.deps.outputs.dep-path }}/SDL2-${{ steps.deps.outputs.dep-sdl-version }}.dmg"
-          sdl_mount_pount="/Volumes/SDL2"
-          if [ ! -d "$sdl_mount_pount/SDL2.framework" ]; then
-            echo "Cannot find SDL2.framework!"
+          hdiutil attach "${{ steps.deps.outputs.dep-path }}/SDL3-${{ steps.deps.outputs.dep-sdl-version }}.dmg"
+          sdl_mount_pount="/Volumes/SDL3"
+          if [ ! -d "$sdl_mount_pount/SDL3.xcframework" ]; then
+            echo "Cannot find SDL3.xcframework!"
             exit 1
           fi
           echo "path=${sdl_mount_pount}" >>$GITHUB_OUTPUT
@@ -225,17 +244,17 @@ jobs:
         run: |
           hdiutil attach '${{ github.workspace }}/${{ needs.dmg.outputs.dmg }}'
           mount_point="/Volumes/${{ needs.src.outputs.project }}"
-          if [ ! -d "$mount_point/${{ needs.src.outputs.project }}.framework" ]; then
-            echo "Cannot find ${{ needs.src.outputs.project }}.framework!"
+          if [ ! -d "$mount_point/${{ needs.src.outputs.project }}.xcframework" ]; then
+            echo "Cannot find ${{ needs.src.outputs.project }}.xcframework!"
             exit 1
           fi
-          echo "path=${mount_point}">>$GITHUB_OUTPUT
+          echo "mount-point=${mount_point}">>$GITHUB_OUTPUT
       - name: 'Verify presence of optional frameworks'
         run: |
-          OPTIONAL_FRAMEWORKS="avif webp"
+          OPTIONAL_FRAMEWORKS="avif jxl webp"
           rc=0
           for opt in $OPTIONAL_FRAMEWORKS; do
-            fw_path="${{ steps.mount.outputs.path }}/optional/${opt}.framework"
+            fw_path="${{ steps.mount.outputs.mount-point }}/optional/${opt}.xcframework"
             if [ -d "${fw_path}" ]; then
               echo "$fw_path OK"
             else
@@ -250,13 +269,58 @@ jobs:
           cmake -S "${{ steps.src.outputs.path }}/cmake/test"               \
               -DTEST_SHARED=TRUE                                            \
               -DTEST_STATIC=FALSE                                           \
-              -DCMAKE_PREFIX_PATH="${{ steps.mount.outputs.path }};${{ steps.deps-mount.outputs.path }}" \
+              -DCMAKE_PREFIX_PATH="${{ steps.mount.outputs.mount-point }};${{ steps.deps-mount.outputs.path }}" \
               -DCMAKE_SYSTEM_NAME=Darwin                                    \
               -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"                      \
-              -Werror=dev                                                   \
               -B build_darwin
           cmake --build build_darwin --config Release --verbose
 
+      - name: 'CMake (configure + build) iOS'
+        run: |
+          cmake -S "${{ steps.src.outputs.path }}/cmake/test"               \
+              -DTEST_SHARED=TRUE                                            \
+              -DTEST_STATIC=FALSE                                           \
+              -DCMAKE_PREFIX_PATH="${{ steps.mount.outputs.mount-point }};${{ steps.deps-mount.outputs.path }}" \
+              -DCMAKE_SYSTEM_NAME=iOS                                       \
+              -DCMAKE_OSX_ARCHITECTURES="arm64"                             \
+              -B build_ios
+          cmake --build build_ios --config Release --verbose
+      - name: 'CMake (configure + build) tvOS'
+        run: |
+          cmake -S "${{ steps.src.outputs.path }}/cmake/test"               \
+              -DTEST_SHARED=TRUE                                            \
+              -DTEST_STATIC=FALSE                                           \
+              -DCMAKE_PREFIX_PATH="${{ steps.mount.outputs.mount-point }};${{ steps.deps-mount.outputs.path }}" \
+              -DCMAKE_SYSTEM_NAME=tvOS                                      \
+              -DCMAKE_OSX_ARCHITECTURES="arm64"                             \
+              -B build_tvos
+          cmake --build build_tvos --config Release --verbose
+      - name: 'CMake (configure + build) iOS simulator'
+        run: |
+          sysroot=$(xcodebuild -version -sdk iphonesimulator Path)
+          echo "sysroot=$sysroot"
+          cmake -S "${{ steps.src.outputs.path }}/cmake/test"               \
+              -DTEST_SHARED=TRUE                                            \
+              -DTEST_STATIC=FALSE                                           \
+              -DCMAKE_PREFIX_PATH="${{ steps.mount.outputs.mount-point }};${{ steps.deps-mount.outputs.path }}" \
+              -DCMAKE_SYSTEM_NAME=iOS                                       \
+              -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"                      \
+              -DCMAKE_OSX_SYSROOT="${sysroot}"                              \
+              -B build_ios_simulator
+          cmake --build build_ios_simulator --config Release --verbose
+      - name: 'CMake (configure + build) tvOS simulator'
+        run: |
+          sysroot=$(xcodebuild -version -sdk appletvsimulator Path)
+          echo "sysroot=$sysroot"
+          cmake -S "${{ steps.src.outputs.path }}/cmake/test"               \
+              -DTEST_SHARED=TRUE                                            \
+              -DTEST_STATIC=FALSE                                           \
+              -DCMAKE_PREFIX_PATH="${{ steps.mount.outputs.mount-point }};${{ steps.deps-mount.outputs.path }}" \
+              -DCMAKE_SYSTEM_NAME=tvOS                                      \
+              -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"                      \
+              -DCMAKE_OSX_SYSROOT="${sysroot}"                              \
+              -B build_tvos_simulator
+          cmake --build build_tvos_simulator --config Release --verbose
   msvc:
     needs: [src]
     runs-on: windows-2019
@@ -286,6 +350,9 @@ jobs:
           cd C:\temp
           unzip "${{ github.workspace }}/${{ needs.src.outputs.src-zip }}"
           echo "path=C:\temp\${{ needs.src.outputs.project }}-${{ needs.src.outputs.version }}" >>$Env:GITHUB_OUTPUT
+      - name: 'Download external dependencies'
+        run: |
+          ${{ steps.zip.outputs.path }}/external/Get-GitModules.ps1
       - name: 'Build MSVC binary archives'
         id: releaser
         env:
@@ -318,6 +385,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Set up ninja
+        uses: ./.github/actions/setup-ninja
       - name: 'Download source archives'
         uses: actions/download-artifact@v4
         with:
@@ -346,7 +415,7 @@ jobs:
         run: |
           mkdir '${{ github.workspace }}/deps-vc'
           cd '${{ github.workspace }}/deps-vc'
-          unzip "${{ steps.deps.outputs.dep-path }}/SDL2-devel-${{ steps.deps.outputs.dep-sdl-version }}-VC.zip"
+          unzip "${{ steps.deps.outputs.dep-path }}/SDL3-devel-${{ steps.deps.outputs.dep-sdl-version }}-VC.zip"
           echo "path=${{ github.workspace }}/deps-vc" >>$env:GITHUB_OUTPUT
       - name: 'Download MSVC binaries'
         uses: actions/download-artifact@v4
@@ -360,8 +429,6 @@ jobs:
           cd '${{ github.workspace }}/vc'
           unzip "${{ github.workspace }}/${{ needs.msvc.outputs.VC-devel }}"
           echo "path=${{ github.workspace }}/vc/${{ needs.src.outputs.project }}-${{ needs.src.outputs.version }}" >>$env:GITHUB_OUTPUT
-      - name: Set up ninja
-        uses: ./.github/actions/setup-ninja
       - name: 'Configure vcvars x86'
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -372,9 +439,8 @@ jobs:
               -B build_x86                                        `
               -GNinja                                             `
               -DCMAKE_BUILD_TYPE=Debug                            `
-              -Werror                                             `
-              -DTEST_STATIC=FALSE                                 `
               -DTEST_SHARED=TRUE                                  `
+              -DTEST_STATIC=FALSE                                 `
               -DCMAKE_SUPPRESS_REGENERATION=TRUE                  `
               -DCMAKE_PREFIX_PATH="${{ steps.bin.outputs.path }};${{ steps.deps-extract.outputs.path }}"
           Start-Sleep -Seconds 2
@@ -389,13 +455,28 @@ jobs:
               -B build_x64                                        `
               -GNinja                                             `
               -DCMAKE_BUILD_TYPE=Debug                            `
-              -Werror                                             `
-              -DTEST_STATIC=FALSE                                 `
               -DTEST_SHARED=TRUE                                  `
+              -DTEST_STATIC=FALSE                                 `
               -DCMAKE_SUPPRESS_REGENERATION=TRUE                  `
               -DCMAKE_PREFIX_PATH="${{ steps.bin.outputs.path }};${{ steps.deps-extract.outputs.path }}"
           Start-Sleep -Seconds 2
           cmake --build build_x64 --config Release --verbose
+      - name: 'Configure vcvars arm64'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64_arm64
+      - name: 'CMake (configure + build + tests) arm64'
+        run: |
+          cmake -S "${{ steps.src.outputs.path }}/cmake/test"     `
+              -B build_arm64                                        `
+              -GNinja                                             `
+              -DCMAKE_BUILD_TYPE=Debug                            `
+              -DTEST_SHARED=TRUE                                  `
+              -DTEST_STATIC=FALSE                                 `
+              -DCMAKE_SUPPRESS_REGENERATION=TRUE                  `
+              -DCMAKE_PREFIX_PATH="${{ steps.bin.outputs.path }};${{ steps.deps-extract.outputs.path }}"
+          Start-Sleep -Seconds 2
+          cmake --build build_arm64 --config Release --verbose
 
   mingw:
     needs: [src]
@@ -491,11 +572,13 @@ jobs:
           mkdir -p /tmp/deps-mingw/i686-w64-mingw32
           mkdir -p /tmp/deps-mingw/x86_64-w64-mingw32
           
-          mkdir -p /tmp/deps-mingw-extract/sdl2/
-          tar -C /tmp/deps-mingw-extract/sdl2 -v -x -f "${{ steps.deps.outputs.dep-path }}/SDL2-devel-${{ steps.deps.outputs.dep-sdl-version }}-mingw.tar.gz"
-          make -C /tmp/deps-mingw-extract/sdl2/SDL2-${{ steps.deps.outputs.dep-sdl-version }} install-package arch=i686-w64-mingw32   prefix=/tmp/deps-mingw/i686-w64-mingw32
-          make -C /tmp/deps-mingw-extract/sdl2/SDL2-${{ steps.deps.outputs.dep-sdl-version }} install-package arch=x86_64-w64-mingw32 prefix=/tmp/deps-mingw/x86_64-w64-mingw32
-          cp -r /tmp/deps-mingw-extract/sdl2/SDL2-${{ steps.deps.outputs.dep-sdl-version }}/cmake/* /tmp/deps-mingw/cmake
+          mkdir -p /tmp/deps-mingw-extract/sdl3
+          tar -C /tmp/deps-mingw-extract/sdl3 -v -x -f "${{ steps.deps.outputs.dep-path }}/SDL3-devel-${{ steps.deps.outputs.dep-sdl-version }}-mingw.tar.gz"
+          make -C /tmp/deps-mingw-extract/sdl3/SDL3-${{ steps.deps.outputs.dep-sdl-version }} install-all DESTDIR=/tmp/deps-mingw
+
+          # FIXME: this should be fixed in SDL3 releases after 3.1.3
+          mkdir -p /tmp/deps-mingw/cmake
+          cp -rv /tmp/deps-mingw-extract/sdl3/SDL3-${{ steps.deps.outputs.dep-sdl-version }}/cmake/* /tmp/deps-mingw/cmake
       - name: 'Download MinGW binaries'
         uses: actions/download-artifact@v4
         with:
@@ -506,30 +589,155 @@ jobs:
         run: |
           mkdir -p /tmp/mingw-tardir
           tar -C /tmp/mingw-tardir -v -x -f "${{ github.workspace }}/${{ needs.mingw.outputs.mingw-devel-tar-gz }}"
-          make -C /tmp/mingw-tardir/${{ needs.src.outputs.project }}-${{ needs.src.outputs.version }} install-package arch=i686-w64-mingw32   prefix=/tmp/deps-mingw/i686-w64-mingw32
-          make -C /tmp/mingw-tardir/${{ needs.src.outputs.project }}-${{ needs.src.outputs.version }} install-package arch=x86_64-w64-mingw32 prefix=/tmp/deps-mingw/x86_64-w64-mingw32
-          cp -r /tmp/mingw-tardir/${{ needs.src.outputs.project }}-${{ needs.src.outputs.version }}/cmake/* /tmp/deps-mingw/cmake
+          make -C /tmp/mingw-tardir/${{ needs.src.outputs.project }}-${{ needs.src.outputs.version }} install-all DESTDIR=/tmp/deps-mingw
       - name: 'CMake (configure + build) i686'
         run: |
           set -e
-          cmake -S "${{ steps.src.outputs.path }}/cmake/test"                                                           \
-              -DCMAKE_BUILD_TYPE="Release"                                                                              \
-              -DTEST_SHARED=TRUE                                                                                        \
-              -DTEST_STATIC=TRUE                                                                                        \
-              -DCMAKE_PREFIX_PATH="/tmp/deps-mingw"                                                                     \
-              -DCMAKE_TOOLCHAIN_FILE="${{ steps.src.outputs.path }}/build-scripts/cmake-toolchain-mingw64-i686.cmake"   \
-              -Werror=dev                                                                                               \
+          cmake -S "${{ steps.src.outputs.path }}/cmake/test" \
+              -DCMAKE_BUILD_TYPE="Release" \
+              -DTEST_SHARED=TRUE \
+              -DTEST_STATIC=FALSE \
+              -DCMAKE_PREFIX_PATH="/tmp/deps-mingw" \
+              -DCMAKE_TOOLCHAIN_FILE="${{ steps.src.outputs.path }}/build-scripts/cmake-toolchain-mingw64-i686.cmake" \
               -B build_x86
           cmake --build build_x86 --config Release --verbose
       - name: 'CMake (configure + build) x86_64'
         run: |
           set -e
-          cmake -S "${{ steps.src.outputs.path }}/cmake/test"                                                           \
-              -DCMAKE_BUILD_TYPE="Release"                                                                              \
-              -DTEST_SHARED=TRUE                                                                                        \
-              -DTEST_STATIC=TRUE                                                                                        \
-              -DCMAKE_PREFIX_PATH="/tmp/deps-mingw"                                                                     \
+          cmake -S "${{ steps.src.outputs.path }}/cmake/test" \
+              -DCMAKE_BUILD_TYPE="Release" \
+              -DTEST_SHARED=TRUE \
+              -DTEST_STATIC=FALSE \
+              -DCMAKE_PREFIX_PATH="/tmp/deps-mingw" \
               -DCMAKE_TOOLCHAIN_FILE="${{ steps.src.outputs.path }}/build-scripts/cmake-toolchain-mingw64-x86_64.cmake" \
-              -Werror=dev                                                                                               \
               -B build_x64
           cmake --build build_x64 --config Release --verbose
+
+  android:
+    needs: [src]
+    runs-on: ubuntu-latest
+    outputs:
+      android-aar: ${{ steps.releaser.outputs.android-aar }}
+    steps:
+      - name: 'Set up Python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 'Fetch build-release.py'
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: 'build-scripts/build-release.py'
+      - name: 'Setup Android NDK'
+        uses: nttld/setup-ndk@v1
+        with:
+          local-cache: true
+          ndk-version: r21e
+      - name: 'Setup Java JDK'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+      - name: 'Install ninja'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ninja-build
+      - name: 'Download source archives'
+        uses: actions/download-artifact@v4
+        with:
+          name: sources
+          path: '${{ github.workspace }}'
+      - name: 'Untar ${{ needs.src.outputs.src-tar-gz }}'
+        id: tar
+        run: |
+          mkdir -p /tmp/tardir
+          tar -C /tmp/tardir -v -x -f "${{ github.workspace }}/${{ needs.src.outputs.src-tar-gz }}"
+          echo "path=/tmp/tardir/${{ needs.src.outputs.project }}-${{ needs.src.outputs.version }}" >>$GITHUB_OUTPUT
+      - name: 'Build Android prefab binary archive(s)'
+        id: releaser
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python build-scripts/build-release.py \
+            --actions download android \
+            --commit ${{ inputs.commit }} \
+            --root "${{ steps.tar.outputs.path }}" \
+            --github \
+            --debug
+      - name: 'Store Android archive(s)'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: '${{ github.workspace }}/dist'
+
+  android-verify:
+    needs: [android, src]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Set up Python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: 'Download source archives'
+        uses: actions/download-artifact@v4
+        with:
+          name: sources
+          path: '${{ github.workspace }}'
+      - name: 'Download Android .aar archive'
+        uses: actions/download-artifact@v4
+        with:
+          name: android
+          path: '${{ github.workspace }}'
+      - name: 'Untar ${{ needs.src.outputs.src-tar-gz }}'
+        id: src
+        run: |
+          mkdir -p /tmp/tardir
+          tar -C /tmp/tardir -v -x -f "${{ github.workspace }}/${{ needs.src.outputs.src-tar-gz }}"
+          echo "path=/tmp/tardir/${{ needs.src.outputs.project }}-${{ needs.src.outputs.version }}" >>$GITHUB_OUTPUT
+      - name: 'Extract Android SDK from AAR'
+        id: sdk
+        run: |
+          unzip -o "${{ github.workspace }}/${{ needs.android.outputs.android-aar }}"
+          python "${{ needs.src.outputs.project }}-${{ needs.src.outputs.version }}.aar" -o /tmp/SDL3_image-android
+          echo "prefix=/tmp/SDL3_image-android" >>$GITHUB_OUTPUT
+      - name: 'Download dependencies'
+        id: deps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python "${{ steps.src.outputs.path }}/build-scripts/build-release.py" \
+            --actions download \
+            --commit ${{ inputs.commit }} \
+            --root "${{ steps.src.outputs.path }}" \
+            --github \
+            --debug
+      - name: 'Extract dependencies'
+        id: deps-extract
+        run: |
+          unzip -o "${{ steps.deps.outputs.dep-path }}/SDL3-devel-${{ steps.deps.outputs.dep-sdl-version }}-android.zip"
+          python "SDL3-${{ steps.deps.outputs.dep-sdl-version }}.aar" -o /tmp/SDL3-android
+          echo "sdl3-prefix=/tmp/SDL3-android" >>$GITHUB_OUTPUT
+      - name: 'Install ninja'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ninja-build
+      - name: 'CMake (configure + build) x86, x64, arm32, arm64'
+        run: |
+          android_abis="x86 x86_64 armeabi-v7a arm64-v8a"
+          for android_abi in ${android_abis}; do
+            echo "Configuring ${android_abi}..."
+            cmake -S "${{ steps.src.outputs.path }}/cmake/test" \
+              -GNinja \
+              -DTEST_FULL=TRUE \
+              -DTEST_STATIC=FALSE \
+              -DCMAKE_PREFIX_PATH="${{ steps.sdk.outputs.prefix }};${{ steps.deps-extract.outputs.sdl3-prefix }}" \
+              -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
+              -DANDROID_ABI=${android_abi} \
+              -DCMAKE_BUILD_TYPE=Release \
+              -B "${android_abi}"
+            echo "Building ${android_abi}..."
+            cmake --build "${android_abi}" --config Release --verbose
+          done

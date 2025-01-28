@@ -1,6 +1,6 @@
 # SDL_Image.zig
 
-Just provides a thin wrapper over [SDL_Image](https://github.com/libsdl-org/SDL_image) library, which I needed for personal usage. It links [SDL](https://github.com/libsdl-org/SDL) to your exe as well.
+Just provides a thin wrapper over [SDL_Image](https://github.com/libsdl-org/SDL_image) library, which I needed for personal usage.
 
 ## Maintenance
 This repo might or might not work...

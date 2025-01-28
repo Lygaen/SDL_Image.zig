@@ -1296,14 +1296,14 @@ static unsigned int nsvg__parseColorRGB(const char* str)
 				while (*str && nsvg__isdigit(*str)) str++;	// skip fractional part
 			}
 			if (*str == '%') str++; else break;
-			while (nsvg__isspace(*str)) str++;
+			while (*str && nsvg__isspace(*str)) str++;
 			if (*str == delimiter[i]) str++;
 			else break;
 		}
 		if (i == 3) {
-			rgbi[0] = roundf(rgbf[0] * 2.55f);
-			rgbi[1] = roundf(rgbf[1] * 2.55f);
-			rgbi[2] = roundf(rgbf[2] * 2.55f);
+			rgbi[0] = (unsigned int)roundf(rgbf[0] * 2.55f);
+			rgbi[1] = (unsigned int)roundf(rgbf[1] * 2.55f);
+			rgbi[2] = (unsigned int)roundf(rgbf[2] * 2.55f);
 		} else {
 			rgbi[0] = rgbi[1] = rgbi[2] = 128;
 		}
